@@ -3,3 +3,5 @@ plugins {
 }
 
 rootProject.name = "synapse"
+
+include("common", "hytale")

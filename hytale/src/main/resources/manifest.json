@@ -3,6 +3,6 @@
   "Name": "Synapse",
   "Version": "0.1.0",
   "Description": "Graph runtime for Synapse quests and game logic",
-  "Main": "io.synapseproject.engine.hytale.SynapsePlugin",
+  "Main": "io.synapseproject.hytale.SynapsePlugin",
   "ServerVersion": "0.7.0"
 }
