@@ -42,35 +42,47 @@ public final class GraphWalker {
 
   public CompletableFuture<String> start(UUID playerId, String graphId) {
     Objects.requireNonNull(playerId, "playerId");
-    GraphIndex index;
-    try {
-      index = graphs.require(graphId);
-    } catch (RuntimeException exception) {
-      return CompletableFuture.failedFuture(exception);
-    }
-    String nodeId;
-    try {
-      nodeId = players.cursor(playerId, graphId).orElseGet(index::entry);
-      index.graph().getNodeOrThrow(nodeId);
-    } catch (RuntimeException exception) {
-      return CompletableFuture.failedFuture(exception);
-    }
-    return walk(playerId, index, nodeId, 0);
+    return graphs
+        .require(graphId)
+        .thenCompose(
+            index ->
+                players
+                    .cursor(playerId, graphId)
+                    .thenCompose(
+                        cursor -> {
+                          String nodeId = cursor.orElseGet(index::entry);
+                          try {
+                            index.graph().getNodeOrThrow(nodeId);
+                          } catch (RuntimeException exception) {
+                            return CompletableFuture.failedFuture(exception);
+                          }
+                          return walk(playerId, index, nodeId, 0);
+                        }));
   }
 
   private CompletableFuture<String> walk(
       UUID playerId, GraphIndex index, String nodeId, int executed) {
     String graphId = index.graph().id();
-    players.place(playerId, graphId, nodeId);
-    if (executed >= STEP_BUDGET) {
-      return CompletableFuture.completedFuture(nodeId);
-    }
-    if (players.completed(playerId, graphId, nodeId) && index.edgesFrom(nodeId).isEmpty()) {
-      return CompletableFuture.completedFuture(nodeId);
-    }
-    events.publish(new NodeExecuteEvent(playerId, graphId, nodeId));
-    return evaluate(playerId, index, nodeId)
-        .thenCompose(result -> advance(playerId, index, nodeId, result, executed));
+    return players
+        .place(playerId, graphId, nodeId)
+        .thenCompose(
+            ignored -> {
+              if (executed >= STEP_BUDGET) {
+                return CompletableFuture.completedFuture(nodeId);
+              }
+              return players
+                  .completed(playerId, graphId, nodeId)
+                  .thenCompose(
+                      done -> {
+                        if (done && index.edgesFrom(nodeId).isEmpty()) {
+                          return CompletableFuture.completedFuture(nodeId);
+                        }
+                        events.publish(new NodeExecuteEvent(playerId, graphId, nodeId));
+                        return evaluate(playerId, index, nodeId)
+                            .thenCompose(
+                                result -> advance(playerId, index, nodeId, result, executed));
+                      });
+            });
   }
 
   private CompletableFuture<NodeResult> evaluate(UUID playerId, GraphIndex index, String nodeId) {
@@ -83,25 +95,29 @@ public final class GraphWalker {
     if (!(value instanceof PropertyValue.Text(String key))) {
       return CompletableFuture.completedFuture(new NodeResult.Failed("missing " + property));
     }
-    ExecutionContext context =
-        new ExecutionContext(
-            playerId, index.graph().id(), nodeId, Map.of(), players.snapshot(playerId));
-    if (node.type() == NodeType.ACTION) {
-      return registry
-          .findAction(key)
-          .map(handler -> handler.handle(context))
-          .orElseGet(
-              () ->
-                  CompletableFuture.completedFuture(
-                      new NodeResult.Failed("action is not registered: " + key)));
-    }
-    return registry
-        .findCondition(key)
-        .map(handler -> handler.handle(context))
-        .orElseGet(
-            () ->
-                CompletableFuture.completedFuture(
-                    new NodeResult.Failed("condition is not registered: " + key)));
+    return players
+        .snapshot(playerId)
+        .thenComposeAsync(
+            variables -> {
+              ExecutionContext context =
+                  new ExecutionContext(playerId, index.graph().id(), nodeId, Map.of(), variables);
+              if (node.type() == NodeType.ACTION) {
+                return registry
+                    .findAction(key)
+                    .map(handler -> handler.handle(context))
+                    .orElseGet(
+                        () ->
+                            CompletableFuture.completedFuture(
+                                new NodeResult.Failed("action is not registered: " + key)));
+              }
+              return registry
+                  .findCondition(key)
+                  .map(handler -> handler.handle(context))
+                  .orElseGet(
+                      () ->
+                          CompletableFuture.completedFuture(
+                              new NodeResult.Failed("condition is not registered: " + key)));
+            });
   }
 
   private CompletableFuture<String> advance(
@@ -125,13 +141,19 @@ public final class GraphWalker {
       boolean terminal,
       int executed) {
     if (edges.isEmpty()) {
-      if (terminal) {
-        String graphId = index.graph().id();
-        if (players.complete(playerId, graphId, nodeId)) {
-          events.publish(new QuestStateChangeEvent(playerId, graphId, nodeId, true));
-        }
+      if (!terminal) {
+        return CompletableFuture.completedFuture(nodeId);
       }
-      return CompletableFuture.completedFuture(nodeId);
+      String graphId = index.graph().id();
+      return players
+          .complete(playerId, graphId, nodeId)
+          .thenApply(
+              added -> {
+                if (added) {
+                  events.publish(new QuestStateChangeEvent(playerId, graphId, nodeId, true));
+                }
+                return nodeId;
+              });
     }
     if (edges.size() != 1 || executed + 1 >= STEP_BUDGET) {
       return CompletableFuture.completedFuture(nodeId);

@@ -5,10 +5,10 @@ import io.synapseproject.api.model.PropertyValue;
 import io.synapseproject.api.model.player.PlayerStateManager;
 import io.synapseproject.api.model.player.VariableContainer;
 import io.synapseproject.api.model.player.VariableScope;
+import io.synapseproject.engine.store.EngineStore;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -17,16 +17,17 @@ import org.jspecify.annotations.NullMarked;
 @NullMarked
 public final class DefaultPlayerStateManager implements PlayerStateManager {
 
-  private final Map<UUID, Map<String, PropertyValue>> player = new ConcurrentHashMap<>();
+  private final EngineStore store;
   private final Map<UUID, Map<String, PropertyValue>> session = new ConcurrentHashMap<>();
-  private final Map<String, PropertyValue> global = new ConcurrentHashMap<>();
-  private final Map<String, String> cursors = new ConcurrentHashMap<>();
-  private final Set<String> completed = ConcurrentHashMap.newKeySet();
+
+  public DefaultPlayerStateManager(EngineStore store) {
+    this.store = Objects.requireNonNull(store, "store");
+  }
 
   @Override
   public CompletableFuture<VariableContainer> getVariables(UUID playerId) {
     Objects.requireNonNull(playerId, "playerId");
-    return CompletableFuture.completedFuture(snapshot(playerId));
+    return snapshot(playerId);
   }
 
   @Override
@@ -36,8 +37,14 @@ public final class DefaultPlayerStateManager implements PlayerStateManager {
     Objects.requireNonNull(scope, "scope");
     Identifiers.require(key, "key");
     Objects.requireNonNull(value, "value");
-    scopeOf(playerId, scope).put(key, value);
-    return CompletableFuture.completedFuture(null);
+    if (scope == VariableScope.SESSION) {
+      session.computeIfAbsent(playerId, ignored -> new ConcurrentHashMap<>()).put(key, value);
+      return CompletableFuture.completedFuture(null);
+    }
+    if (scope == VariableScope.PLAYER) {
+      return store.setPlayerVariable(playerId, key, value);
+    }
+    return store.setGlobalVariable(key, value);
   }
 
   @Override
@@ -45,43 +52,36 @@ public final class DefaultPlayerStateManager implements PlayerStateManager {
     Objects.requireNonNull(playerId, "playerId");
     Identifiers.require(graphId, "graphId");
     Identifiers.require(nodeId, "nodeId");
-    return CompletableFuture.completedFuture(completed(playerId, graphId, nodeId));
+    return completed(playerId, graphId, nodeId);
   }
 
-  public VariableContainer snapshot(UUID playerId) {
+  public CompletableFuture<VariableContainer> snapshot(UUID playerId) {
     Objects.requireNonNull(playerId, "playerId");
-    return new VariableContainer(
-        playerId,
-        Map.copyOf(player.getOrDefault(playerId, Map.of())),
-        Map.copyOf(session.getOrDefault(playerId, Map.of())),
-        Map.copyOf(global));
+    return store
+        .playerVariables(playerId)
+        .thenCombine(
+            store.globalVariables(),
+            (player, global) ->
+                new VariableContainer(
+                    playerId,
+                    player,
+                    Map.copyOf(session.getOrDefault(playerId, Map.of())),
+                    global));
   }
 
-  public Optional<String> cursor(UUID playerId, String graphId) {
-    return Optional.ofNullable(cursors.get(key(playerId, graphId, "")));
+  public CompletableFuture<Optional<String>> cursor(UUID playerId, String graphId) {
+    return store.cursor(playerId, graphId);
   }
 
-  public void place(UUID playerId, String graphId, String nodeId) {
-    cursors.put(key(playerId, graphId, ""), nodeId);
+  public CompletableFuture<Void> place(UUID playerId, String graphId, String nodeId) {
+    return store.place(playerId, graphId, nodeId);
   }
 
-  public boolean completed(UUID playerId, String graphId, String nodeId) {
-    return completed.contains(key(playerId, graphId, nodeId));
+  public CompletableFuture<Boolean> completed(UUID playerId, String graphId, String nodeId) {
+    return store.completed(playerId, graphId, nodeId);
   }
 
-  public boolean complete(UUID playerId, String graphId, String nodeId) {
-    return completed.add(key(playerId, graphId, nodeId));
-  }
-
-  private static String key(UUID playerId, String graphId, String nodeId) {
-    return playerId + "\0" + graphId + "\0" + nodeId;
-  }
-
-  private Map<String, PropertyValue> scopeOf(UUID playerId, VariableScope scope) {
-    return switch (scope) {
-      case PLAYER -> player.computeIfAbsent(playerId, ignored -> new ConcurrentHashMap<>());
-      case SESSION -> session.computeIfAbsent(playerId, ignored -> new ConcurrentHashMap<>());
-      case GLOBAL -> global;
-    };
+  public CompletableFuture<Boolean> complete(UUID playerId, String graphId, String nodeId) {
+    return store.complete(playerId, graphId, nodeId);
   }
 }

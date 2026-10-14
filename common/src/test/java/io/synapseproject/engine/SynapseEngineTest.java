@@ -17,27 +17,33 @@ class SynapseEngineTest {
 
   @Test
   void registerExposesTheEngine() {
-    SynapseEngine engine = new SynapseEngine();
-    assertThrows(IllegalStateException.class, SynapseAPI::get);
+    try (SynapseEngine engine = new SynapseEngine()) {
+      assertThrows(IllegalStateException.class, SynapseAPI::get);
 
-    SynapseBindings.register(engine);
+      SynapseBindings.register(engine);
 
-    assertSame(engine, SynapseAPI.get());
-    assertSame(engine.getGraphManager(), SynapseAPI.get().getGraphManager());
-    assertSame(engine.getPlayerStateManager(), SynapseAPI.get().getPlayerStateManager());
-    assertSame(engine.getRegistryManager(), SynapseAPI.get().getRegistryManager());
-    assertSame(engine.getEventManager(), SynapseAPI.get().getEventManager());
+      assertSame(engine, SynapseAPI.get());
+      assertSame(engine.getGraphManager(), SynapseAPI.get().getGraphManager());
+      assertSame(engine.getPlayerStateManager(), SynapseAPI.get().getPlayerStateManager());
+      assertSame(engine.getRegistryManager(), SynapseAPI.get().getRegistryManager());
+      assertSame(engine.getEventManager(), SynapseAPI.get().getEventManager());
+    }
   }
 
   @Test
   void secondRegisterFails() {
-    SynapseBindings.register(new SynapseEngine());
-    assertThrows(IllegalStateException.class, () -> SynapseBindings.register(new SynapseEngine()));
+    try (SynapseEngine first = new SynapseEngine();
+        SynapseEngine second = new SynapseEngine()) {
+      SynapseBindings.register(first);
+      assertThrows(IllegalStateException.class, () -> SynapseBindings.register(second));
+    }
   }
 
   @Test
   void unregisterClearsTheEngine() {
-    SynapseBindings.register(new SynapseEngine());
+    try (SynapseEngine engine = new SynapseEngine()) {
+      SynapseBindings.register(engine);
+    }
     SynapseBindings.unregister();
     assertThrows(IllegalStateException.class, SynapseAPI::get);
   }

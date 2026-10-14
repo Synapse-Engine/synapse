@@ -30,99 +30,106 @@ class GraphWalkerTest {
 
   @Test
   void linearGraphStopsOnTheTerminalNode() throws Exception {
-    SynapseEngine engine = new SynapseEngine();
-    UUID playerId = UUID.randomUUID();
-    engine.putGraph(
-        graph(
-            "quest",
-            List.of(dialogue("a"), dialogue("b"), dialogue("c")),
-            List.of(edge("ab", "a", "b"), edge("bc", "b", "c"))));
-    AtomicInteger changes = new AtomicInteger();
-    try (var _ =
-        engine
-            .getEventManager()
-            .subscribe(QuestStateChangeEvent.class, _ -> changes.incrementAndGet())) {
-      assertEquals("c", engine.start(playerId, "quest").join());
-      assertTrue(engine.getPlayerStateManager().isNodeCompleted(playerId, "quest", "c").join());
-      assertFalse(engine.getPlayerStateManager().isNodeCompleted(playerId, "quest", "a").join());
-      assertEquals(1, changes.get());
+    try (SynapseEngine engine = new SynapseEngine()) {
+      UUID playerId = UUID.randomUUID();
+      engine.putGraph(
+          graph(
+              "quest",
+              List.of(dialogue("a"), dialogue("b"), dialogue("c")),
+              List.of(edge("ab", "a", "b"), edge("bc", "b", "c"))));
+      AtomicInteger changes = new AtomicInteger();
+      try (var _ =
+          engine
+              .getEventManager()
+              .subscribe(QuestStateChangeEvent.class, _ -> changes.incrementAndGet())) {
+        assertEquals("c", engine.start(playerId, "quest").join());
+        assertTrue(engine.getPlayerStateManager().isNodeCompleted(playerId, "quest", "c").join());
+        assertFalse(engine.getPlayerStateManager().isNodeCompleted(playerId, "quest", "a").join());
+        assertEquals(1, changes.get());
 
-      assertEquals("c", engine.start(playerId, "quest").join());
-      assertEquals(1, changes.get());
+        assertEquals("c", engine.start(playerId, "quest").join());
+        assertEquals(1, changes.get());
+      }
     }
   }
 
   @Test
   void branchFollowsTheNamedPort() {
-    SynapseEngine engine = new SynapseEngine();
-    engine
-        .getRegistryManager()
-        .registerCondition(
-            "gate", _ -> CompletableFuture.completedFuture(new NodeResult.Branch("yes")))
-        .join();
-    Node check =
-        new Node(
-            "check",
-            NodeType.CONDITION,
-            Map.of("condition", new PropertyValue.Text("gate")),
-            List.of(
-                new Port("in", PortDirection.IN),
-                new Port("yes", PortDirection.OUT),
-                new Port("no", PortDirection.OUT)));
-    engine.putGraph(
-        graph(
-            "quest",
-            List.of(check, dialogue("yes"), dialogue("no")),
-            List.of(
-                edge("yes-edge", "check", "yes", "yes"), edge("no-edge", "check", "no", "no"))));
+    try (SynapseEngine engine = new SynapseEngine()) {
+      engine
+          .getRegistryManager()
+          .registerCondition(
+              "gate", _ -> CompletableFuture.completedFuture(new NodeResult.Branch("yes")))
+          .join();
+      Node check =
+          new Node(
+              "check",
+              NodeType.CONDITION,
+              Map.of("condition", new PropertyValue.Text("gate")),
+              List.of(
+                  new Port("in", PortDirection.IN),
+                  new Port("yes", PortDirection.OUT),
+                  new Port("no", PortDirection.OUT)));
+      engine.putGraph(
+          graph(
+              "quest",
+              List.of(check, dialogue("yes"), dialogue("no")),
+              List.of(
+                  edge("yes-edge", "check", "yes", "yes"), edge("no-edge", "check", "no", "no"))));
 
-    assertEquals("yes", engine.start(UUID.randomUUID(), "quest").join());
+      assertEquals("yes", engine.start(UUID.randomUUID(), "quest").join());
+    }
   }
 
   @Test
   void cycleStopsAtTheStepBudget() {
-    SynapseEngine engine = new SynapseEngine();
-    engine.putGraph(
-        graph(
-            "loop",
-            List.of(dialogue("start"), dialogue("a"), dialogue("b")),
-            List.of(edge("in", "start", "a"), edge("ab", "a", "b"), edge("ba", "b", "a"))));
+    try (SynapseEngine engine = new SynapseEngine()) {
+      engine.putGraph(
+          graph(
+              "loop",
+              List.of(dialogue("start"), dialogue("a"), dialogue("b")),
+              List.of(edge("in", "start", "a"), edge("ab", "a", "b"), edge("ba", "b", "a"))));
 
-    String nodeId =
-        assertTimeoutPreemptively(
-            Duration.ofSeconds(2), () -> engine.start(UUID.randomUUID(), "loop").join());
-    assertTrue(nodeId.equals("start") || nodeId.equals("a") || nodeId.equals("b"));
+      String nodeId =
+          assertTimeoutPreemptively(
+              Duration.ofSeconds(2), () -> engine.start(UUID.randomUUID(), "loop").join());
+      assertTrue(nodeId.equals("start") || nodeId.equals("a") || nodeId.equals("b"));
+    }
   }
 
   @Test
   void pendingStaysOnTheNode() {
-    SynapseEngine engine = new SynapseEngine();
-    engine
-        .getRegistryManager()
-        .registerAction("wait", _ -> CompletableFuture.completedFuture(new NodeResult.Pending()))
-        .join();
-    engine.putGraph(
-        graph(
-            "quest",
-            List.of(
-                node(
-                    "wait-here", NodeType.ACTION, Map.of("action", new PropertyValue.Text("wait"))),
-                dialogue("after")),
-            List.of(edge("next", "wait-here", "after"))));
+    try (SynapseEngine engine = new SynapseEngine()) {
+      engine
+          .getRegistryManager()
+          .registerAction("wait", _ -> CompletableFuture.completedFuture(new NodeResult.Pending()))
+          .join();
+      engine.putGraph(
+          graph(
+              "quest",
+              List.of(
+                  node(
+                      "wait-here",
+                      NodeType.ACTION,
+                      Map.of("action", new PropertyValue.Text("wait"))),
+                  dialogue("after")),
+              List.of(edge("next", "wait-here", "after"))));
 
-    UUID playerId = UUID.randomUUID();
-    assertEquals("wait-here", engine.start(playerId, "quest").join());
-    assertFalse(
-        engine.getPlayerStateManager().isNodeCompleted(playerId, "quest", "wait-here").join());
+      UUID playerId = UUID.randomUUID();
+      assertEquals("wait-here", engine.start(playerId, "quest").join());
+      assertFalse(
+          engine.getPlayerStateManager().isNodeCompleted(playerId, "quest", "wait-here").join());
+    }
   }
 
   @Test
   void missingGraphFails() {
-    SynapseEngine engine = new SynapseEngine();
-    CompletionException exception =
-        assertThrows(
-            CompletionException.class, () -> engine.start(UUID.randomUUID(), "missing").join());
-    assertInstanceOf(IllegalArgumentException.class, exception.getCause());
+    try (SynapseEngine engine = new SynapseEngine()) {
+      CompletionException exception =
+          assertThrows(
+              CompletionException.class, () -> engine.start(UUID.randomUUID(), "missing").join());
+      assertInstanceOf(IllegalArgumentException.class, exception.getCause());
+    }
   }
 
   private static Graph graph(String id, List<Node> nodes, List<Edge> edges) {
