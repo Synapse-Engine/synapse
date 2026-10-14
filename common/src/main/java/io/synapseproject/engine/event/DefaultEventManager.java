@@ -24,4 +24,17 @@ public final class DefaultEventManager implements EventManager {
     bucket.add(listener);
     return () -> bucket.remove(listener);
   }
+
+  public void publish(SynapseEvent event) {
+    Objects.requireNonNull(event, "event");
+    List<Consumer<?>> bucket = listeners.get(event.getClass());
+    if (bucket == null) {
+      return;
+    }
+    for (Consumer<?> listener : bucket) {
+      @SuppressWarnings("unchecked")
+      Consumer<SynapseEvent> typed = (Consumer<SynapseEvent>) listener;
+      typed.accept(event);
+    }
+  }
 }

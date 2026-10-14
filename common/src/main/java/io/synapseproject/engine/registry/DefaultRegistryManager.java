@@ -5,6 +5,7 @@ import io.synapseproject.api.model.execution.CustomActionHandler;
 import io.synapseproject.api.model.execution.CustomConditionHandler;
 import io.synapseproject.api.model.registry.RegistryManager;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import org.jspecify.annotations.NullMarked;
@@ -34,6 +35,14 @@ public final class DefaultRegistryManager implements RegistryManager {
   @Override
   public CompletableFuture<Void> unregisterCondition(String key) {
     return unregister(conditions, Identifiers.require(key, "key"), "condition");
+  }
+
+  public Optional<CustomActionHandler> findAction(String key) {
+    return Optional.ofNullable(actions.get(key));
+  }
+
+  public Optional<CustomConditionHandler> findCondition(String key) {
+    return Optional.ofNullable(conditions.get(key));
   }
 
   private static <T> CompletableFuture<Void> register(
