@@ -64,7 +64,6 @@ class SqliteStateTest {
     UUID otherId = UUID.randomUUID();
     Graph quest =
         graph(
-            "quest",
             List.of(dialogue("a"), dialogue("b"), dialogue("c")),
             List.of(edge("ab", "a", "b"), edge("bc", "b", "c")));
     try (SynapseEngine engine = new SynapseEngine(database)) {
@@ -86,6 +85,9 @@ class SqliteStateTest {
           .setVariable(playerId, VariableScope.SESSION, "match", new PropertyValue.Bool(true))
           .join();
       engine.start(playerId, "quest").join();
+      assertEquals(
+          new PropertyValue.Bool(true),
+          engine.getPlayerStateManager().getVariables(playerId).join().session().get("match"));
     }
 
     try (SynapseEngine engine = new SynapseEngine(database)) {
@@ -124,7 +126,6 @@ class SqliteStateTest {
       engine
           .putGraph(
               graph(
-                  "quest",
                   List.of(
                       dialogue("start"),
                       node(
@@ -159,12 +160,12 @@ class SqliteStateTest {
     }
   }
 
-  private static Graph graph(String id, List<Node> nodes, List<Edge> edges) {
+  private static Graph graph(List<Node> nodes, List<Edge> edges) {
     Map<String, Node> indexed = new LinkedHashMap<>();
     for (Node node : nodes) {
       indexed.put(node.id(), node);
     }
-    return new Graph(id, 1, indexed, edges, Map.of());
+    return new Graph("quest", 1, indexed, edges, Map.of());
   }
 
   private static Node dialogue(String id) {

@@ -27,6 +27,9 @@ class SynapseEngineTest {
       assertSame(engine.getPlayerStateManager(), SynapseAPI.get().getPlayerStateManager());
       assertSame(engine.getRegistryManager(), SynapseAPI.get().getRegistryManager());
       assertSame(engine.getEventManager(), SynapseAPI.get().getEventManager());
+
+      SynapseBindings.unregister();
+      assertThrows(IllegalStateException.class, SynapseAPI::get);
     }
   }
 

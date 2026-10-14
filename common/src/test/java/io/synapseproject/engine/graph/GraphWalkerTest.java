@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.synapseproject.api.event.NodeExecuteEvent;
 import io.synapseproject.api.event.QuestStateChangeEvent;
 import io.synapseproject.api.model.PropertyValue;
 import io.synapseproject.api.model.execution.NodeResult;
@@ -18,12 +19,12 @@ import io.synapseproject.api.model.graph.Port;
 import io.synapseproject.api.model.graph.PortDirection;
 import io.synapseproject.engine.SynapseEngine;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class GraphWalkerTest {
@@ -37,18 +38,16 @@ class GraphWalkerTest {
               "quest",
               List.of(dialogue("a"), dialogue("b"), dialogue("c")),
               List.of(edge("ab", "a", "b"), edge("bc", "b", "c"))));
-      AtomicInteger changes = new AtomicInteger();
-      try (var _ =
-          engine
-              .getEventManager()
-              .subscribe(QuestStateChangeEvent.class, _ -> changes.incrementAndGet())) {
+      List<QuestStateChangeEvent> changes = new ArrayList<>();
+      try (var _ = engine.getEventManager().subscribe(QuestStateChangeEvent.class, changes::add)) {
+        assertFalse(engine.getPlayerStateManager().isNodeCompleted(playerId, "quest", "c").join());
         assertEquals("c", engine.start(playerId, "quest").join());
         assertTrue(engine.getPlayerStateManager().isNodeCompleted(playerId, "quest", "c").join());
         assertFalse(engine.getPlayerStateManager().isNodeCompleted(playerId, "quest", "a").join());
-        assertEquals(1, changes.get());
+        assertEquals(List.of(new QuestStateChangeEvent(playerId, "quest", "c", true)), changes);
 
         assertEquals("c", engine.start(playerId, "quest").join());
-        assertEquals(1, changes.get());
+        assertEquals(1, changes.size());
       }
     }
   }
@@ -82,7 +81,7 @@ class GraphWalkerTest {
   }
 
   @Test
-  void cycleStopsAtTheStepBudget() {
+  void cycleStopsAtTheStepBudget() throws Exception {
     try (SynapseEngine engine = new SynapseEngine()) {
       engine.putGraph(
           graph(
@@ -90,10 +89,18 @@ class GraphWalkerTest {
               List.of(dialogue("start"), dialogue("a"), dialogue("b")),
               List.of(edge("in", "start", "a"), edge("ab", "a", "b"), edge("ba", "b", "a"))));
 
-      String nodeId =
-          assertTimeoutPreemptively(
-              Duration.ofSeconds(2), () -> engine.start(UUID.randomUUID(), "loop").join());
-      assertTrue(nodeId.equals("start") || nodeId.equals("a") || nodeId.equals("b"));
+      List<String> executed = new ArrayList<>();
+      String nodeId;
+      try (var _ =
+          engine
+              .getEventManager()
+              .subscribe(NodeExecuteEvent.class, event -> executed.add(event.nodeId()))) {
+        nodeId =
+            assertTimeoutPreemptively(
+                Duration.ofSeconds(2), () -> engine.start(UUID.randomUUID(), "loop").join());
+      }
+      assertEquals(expectedCycle(), executed);
+      assertEquals(executed.getLast(), nodeId);
     }
   }
 
@@ -130,6 +137,20 @@ class GraphWalkerTest {
               CompletionException.class, () -> engine.start(UUID.randomUUID(), "missing").join());
       assertInstanceOf(IllegalArgumentException.class, exception.getCause());
     }
+  }
+
+  private static List<String> expectedCycle() {
+    List<String> nodes = new ArrayList<>();
+    for (int executed = 0; executed < GraphWalker.STEP_BUDGET; executed++) {
+      if (executed == 0) {
+        nodes.add("start");
+      } else if (executed % 2 == 1) {
+        nodes.add("a");
+      } else {
+        nodes.add("b");
+      }
+    }
+    return nodes;
   }
 
   private static Graph graph(String id, List<Node> nodes, List<Edge> edges) {
